@@ -1,0 +1,13 @@
+[package]
+name = "request-channel"
+version = "0.0.1"
+edition = "2021"
+resolver = "2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+futures = { version = "0.3.25", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+futures = { version = "0.3.25", features = ["executor"] }
