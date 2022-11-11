@@ -6,18 +6,15 @@ mod tests;
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver as Receiver, UnboundedSender as Sender},
     lock::Mutex as AsyncMutex,
-    ready, FutureExt, StreamExt,
+    StreamExt,
 };
 use std::{
     collections::hash_map::HashMap,
-    future::Future,
     mem,
-    pin::Pin,
     sync::{
         atomic::{AtomicU32, Ordering},
         Mutex,
     },
-    task::{Context, Poll},
 };
 
 type Id = u32;
@@ -29,11 +26,11 @@ struct Rx<R>(Id, Option<R>);
 pub struct Requester<T, R> {
     sender: Sender<Tx<T>>,
     receiver: AsyncMutex<Receiver<Rx<R>>>,
-    /// Buffer contains ids of all all handles waiting for response.
+    /// Buffer contains ids of all all Responses waiting for response.
     /// Possible values and their meaning:
     /// + `None` - response may arrive in future.
     /// + `Some(None)` - response will never arrive.
-    /// + `Some(Some(message))` - response arrived but hasn't been extracted by handle.
+    /// + `Some(Some(message))` - response arrived but hasn't been extracted by Response.
     buffer: Mutex<HashMap<Id, Option<Option<R>>>>,
     counter: AtomicId,
 }
@@ -92,37 +89,31 @@ impl<'a, R> Response<'a, R> {
             .unwrap()
             .take()
     }
-}
 
-impl<'a, R> Future for Response<'a, R> {
-    type Output = Option<R>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    pub async fn take(self) -> Option<R> {
         if let Some(value) = self.try_take_from_buffer() {
-            return Poll::Ready(value);
+            return value;
         }
 
-        let mut guard = ready!(self.receiver.lock().poll_unpin(cx));
+        let mut guard = self.receiver.lock().await;
 
         // Check the buffer once more to detect insertion right before guard but after previous check.
         if let Some(value) = self.try_take_from_buffer() {
-            return Poll::Ready(value);
+            return value;
         }
 
-        while let Some(Rx(id, message)) = ready!(guard.poll_next_unpin(cx)) {
+        while let Some(Rx(id, message)) = guard.next().await {
             if id == self.id {
-                return Poll::Ready(message);
+                return message;
             }
             if let Some(value) = self.buffer.lock().unwrap().get_mut(&id) {
                 assert!(value.replace(message).is_none());
             }
         }
 
-        Poll::Ready(None)
+        None
     }
 }
-
-impl<'a, R> Unpin for Response<'a, R> {}
 
 impl<'a, R> Drop for Response<'a, R> {
     fn drop(&mut self) {

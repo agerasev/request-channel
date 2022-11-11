@@ -8,7 +8,7 @@ fn single() {
         join!(
             async move {
                 let r = req.request(1).unwrap();
-                assert_eq!(r.await.unwrap(), 2);
+                assert_eq!(r.take().await.unwrap(), 2);
             },
             async move {
                 let (x, r) = res.next().await.unwrap();
@@ -31,7 +31,7 @@ fn multiple() {
                     .map(|i| req.request(i).unwrap())
                     .collect::<Vec<_>>();
 
-                assert!(join_all(rs)
+                assert!(join_all(rs.into_iter().map(|r| r.take()))
                     .await
                     .into_iter()
                     .map(|y| y.unwrap())
