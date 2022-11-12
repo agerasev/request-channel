@@ -45,3 +45,35 @@ fn multiple() {
         );
     });
 }
+
+#[test]
+fn no_resonse() {
+    let (req, mut res) = channel::<i32, i32>();
+    block_on(async {
+        join!(
+            async move {
+                let r = req.request(1).unwrap();
+                assert_eq!(r.take().await, None);
+            },
+            async move {
+                let _ = res.next().await.unwrap();
+            }
+        );
+    });
+}
+
+#[test]
+fn request_and_drop() {
+    let (req, mut res) = channel::<i32, i32>();
+    block_on(async {
+        join!(
+            async move {
+                let _ = req.request(1).unwrap();
+            },
+            async move {
+                let (x, r) = res.next().await.unwrap();
+                r.response(2 * x);
+            }
+        );
+    });
+}
