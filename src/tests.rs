@@ -8,11 +8,11 @@ fn single() {
         join!(
             async move {
                 let r = req.request(1).unwrap();
-                assert_eq!(r.take().await.unwrap(), 2);
+                assert_eq!(r.get_response().await.unwrap(), 2);
             },
             async move {
                 let (x, r) = res.next().await.unwrap();
-                r.response(x * 2);
+                r.respond(x * 2);
             }
         );
     });
@@ -31,7 +31,7 @@ fn multiple() {
                     .map(|i| req.request(i).unwrap())
                     .collect::<Vec<_>>();
 
-                assert!(join_all(rs.into_iter().map(|r| r.take()))
+                assert!(join_all(rs.into_iter().map(|r| r.get_response()))
                     .await
                     .into_iter()
                     .map(|y| y.unwrap())
@@ -39,7 +39,7 @@ fn multiple() {
             },
             async move {
                 while let Some((x, r)) = res.next().await {
-                    r.response(x * 2);
+                    r.respond(x * 2);
                 }
             }
         );
@@ -53,7 +53,7 @@ fn no_resonse() {
         join!(
             async move {
                 let r = req.request(1).unwrap();
-                assert_eq!(r.take().await, None);
+                assert_eq!(r.get_response().await, None);
             },
             async move {
                 let _ = res.next().await.unwrap();
@@ -72,7 +72,7 @@ fn request_and_drop() {
             },
             async move {
                 let (x, r) = res.next().await.unwrap();
-                r.response(2 * x);
+                r.respond(2 * x);
             }
         );
     });

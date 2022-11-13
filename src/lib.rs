@@ -30,7 +30,7 @@ pub struct Requester<T, R> {
     /// Possible values and their meaning:
     /// + `None` - response may arrive in future.
     /// + `Some(None)` - response will never arrive.
-    /// + `Some(Some(message))` - response arrived but hasn't been extracted by Response.
+    /// + `Some(Some(message))` - response arrived but hasn't been extracted by Request.
     buffer: Mutex<HashMap<Id, Option<Option<R>>>>,
     counter: AtomicId,
 }
@@ -57,14 +57,14 @@ pub fn channel<T, R>() -> (Requester<T, R>, Responder<T, R>) {
     )
 }
 
-pub struct Response<'a, R> {
+pub struct Request<'a, R> {
     id: Id,
     receiver: &'a AsyncMutex<Receiver<Rx<R>>>,
     buffer: &'a Mutex<HashMap<Id, Option<Option<R>>>>,
 }
 
 impl<T, R> Requester<T, R> {
-    pub fn request(&self, message: T) -> Result<Response<'_, R>, T> {
+    pub fn request(&self, message: T) -> Result<Request<'_, R>, T> {
         let id = self.counter.fetch_add(1, Ordering::SeqCst);
         let mut buffer = self.buffer.lock().unwrap();
         debug_assert!(!buffer.contains_key(&id));
@@ -72,7 +72,7 @@ impl<T, R> Requester<T, R> {
             Ok(()) => assert!(buffer.insert(id, None).is_none()),
             Err(err) => return Err(err.into_inner().1),
         }
-        Ok(Response {
+        Ok(Request {
             id,
             receiver: &self.receiver,
             buffer: &self.buffer,
@@ -80,7 +80,7 @@ impl<T, R> Requester<T, R> {
     }
 }
 
-impl<'a, R> Response<'a, R> {
+impl<'a, R> Request<'a, R> {
     fn try_take_from_buffer(&self) -> Option<Option<R>> {
         self.buffer
             .lock()
@@ -90,7 +90,7 @@ impl<'a, R> Response<'a, R> {
             .take()
     }
 
-    pub async fn take(self) -> Option<R> {
+    pub async fn get_response(self) -> Option<R> {
         if let Some(value) = self.try_take_from_buffer() {
             return value;
         }
@@ -115,23 +115,23 @@ impl<'a, R> Response<'a, R> {
     }
 }
 
-impl<'a, R> Drop for Response<'a, R> {
+impl<'a, R> Drop for Request<'a, R> {
     fn drop(&mut self) {
         self.buffer.lock().unwrap().remove(&self.id).unwrap();
     }
 }
 
-pub struct Request<'a, R> {
+pub struct Response<'a, R> {
     id: Id,
     sender: &'a mut Sender<Rx<R>>,
 }
 
 impl<T, R> Responder<T, R> {
-    pub async fn next(&mut self) -> Option<(T, Request<'_, R>)> {
+    pub async fn next(&mut self) -> Option<(T, Response<'_, R>)> {
         let Tx(id, message) = self.receiver.next().await?;
         Some((
             message,
-            Request {
+            Response {
                 id,
                 sender: &mut self.sender,
             },
@@ -139,15 +139,15 @@ impl<T, R> Responder<T, R> {
     }
 }
 
-impl<'a, R> Request<'a, R> {
-    pub fn response(self, message: R) {
+impl<'a, R> Response<'a, R> {
+    pub fn respond(self, message: R) {
         let _ = self.sender.unbounded_send(Rx(self.id, Some(message)));
         // Suppress calling `drop`.
         mem::forget(self);
     }
 }
 
-impl<'a, R> Drop for Request<'a, R> {
+impl<'a, R> Drop for Response<'a, R> {
     fn drop(&mut self) {
         let _ = self.sender.unbounded_send(Rx(self.id, None));
     }
