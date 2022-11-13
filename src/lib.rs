@@ -26,11 +26,11 @@ struct Rx<R>(Id, Option<R>);
 pub struct Requester<T, R> {
     sender: Sender<Tx<T>>,
     receiver: AsyncMutex<Receiver<Rx<R>>>,
-    /// Buffer contains ids of all all Responses waiting for response.
+    /// Buffer contains ids of all `Request`s waiting for response.
     /// Possible values and their meaning:
     /// + `None` - response may arrive in future.
     /// + `Some(None)` - response will never arrive.
-    /// + `Some(Some(message))` - response arrived but hasn't been extracted by Request.
+    /// + `Some(Some(message))` - response arrived but hasn't been extracted by corresponding `Request`.
     buffer: Mutex<HashMap<Id, Option<Option<R>>>>,
     counter: AtomicId,
 }
@@ -57,6 +57,7 @@ pub fn channel<T, R>() -> (Requester<T, R>, Responder<T, R>) {
     )
 }
 
+/// Request handle. Used as a promise for response.
 pub struct Request<'a, R> {
     id: Id,
     receiver: &'a AsyncMutex<Receiver<Rx<R>>>,
@@ -64,6 +65,11 @@ pub struct Request<'a, R> {
 }
 
 impl<T, R> Requester<T, R> {
+    /// Make request.
+    ///
+    /// This function returns:
+    /// + `Ok(request)` - request made where `request` is and object used to get response whent it's ready.
+    /// + `Err(message)` - [`Responder`] is closed, `message` is returned back.
     pub fn request(&self, message: T) -> Result<Request<'_, R>, T> {
         let id = self.counter.fetch_add(1, Ordering::SeqCst);
         let mut buffer = self.buffer.lock().unwrap();
@@ -81,7 +87,7 @@ impl<T, R> Requester<T, R> {
 }
 
 impl<'a, R> Request<'a, R> {
-    fn try_take_from_buffer(&self) -> Option<Option<R>> {
+    fn take_from_buffer(&self) -> Option<Option<R>> {
         self.buffer
             .lock()
             .unwrap()
@@ -90,15 +96,56 @@ impl<'a, R> Request<'a, R> {
             .take()
     }
 
+    fn put_in_buffer(&self, id: Id, message: Option<R>) {
+        if let Some(value) = self.buffer.lock().unwrap().get_mut(&id) {
+            assert!(value.replace(message).is_none());
+        }
+    }
+
+    /// Try get response without waiting.
+    ///
+    /// This function returns:
+    /// + `None` - no response yet but it may arrive in future.
+    /// + `Some(response)` - response arrived or it will never arrive (see [`Self::get_response`]).
+    pub fn try_get_response(self) -> Option<Option<R>> {
+        if let Some(value) = self.take_from_buffer() {
+            return Some(value);
+        }
+
+        let mut guard = self.receiver.try_lock()?;
+
+        // Check the buffer once more to detect insertion right before guard but after previous check.
+        if let Some(value) = self.take_from_buffer() {
+            return Some(value);
+        }
+
+        loop {
+            match guard.try_next().ok()? {
+                Some(Rx(id, message)) => {
+                    if id == self.id {
+                        return Some(message);
+                    }
+                    self.put_in_buffer(id, message);
+                }
+                None => return Some(None),
+            }
+        }
+    }
+
+    /// Wait for response and return it.
+    ///
+    /// This function returns:
+    /// + `None` - no response (due to [`Responder`] being closed or corresponding [`Response`] being ignored).
+    /// + `Some(message)` - response arrived.
     pub async fn get_response(self) -> Option<R> {
-        if let Some(value) = self.try_take_from_buffer() {
+        if let Some(value) = self.take_from_buffer() {
             return value;
         }
 
         let mut guard = self.receiver.lock().await;
 
         // Check the buffer once more to detect insertion right before guard but after previous check.
-        if let Some(value) = self.try_take_from_buffer() {
+        if let Some(value) = self.take_from_buffer() {
             return value;
         }
 
@@ -106,9 +153,7 @@ impl<'a, R> Request<'a, R> {
             if id == self.id {
                 return message;
             }
-            if let Some(value) = self.buffer.lock().unwrap().get_mut(&id) {
-                assert!(value.replace(message).is_none());
-            }
+            self.put_in_buffer(id, message);
         }
 
         None
@@ -121,12 +166,22 @@ impl<'a, R> Drop for Request<'a, R> {
     }
 }
 
+/// Handle for responding to request.
+///
+/// When dropped the corresponding [`Request`] will be notified about request absense.
 pub struct Response<'a, R> {
     id: Id,
     sender: &'a mut Sender<Rx<R>>,
 }
 
 impl<T, R> Responder<T, R> {
+    /// Wait for next request.
+    ///
+    /// This function returns:
+    /// + `Some(message, response)` - request received. `message` is data being sent, `response` is an object used to respond to request.
+    /// + `None` - [`Requester`] is closed.
+    ///
+    /// *This is inherent method rather than [`Stream`](`futures::Stream`) impl because for now there is no way to put lifetime in its [`Output`](`futures::Stream::Item`).*
     pub async fn next(&mut self) -> Option<(T, Response<'_, R>)> {
         let Tx(id, message) = self.receiver.next().await?;
         Some((
@@ -140,6 +195,7 @@ impl<T, R> Responder<T, R> {
 }
 
 impl<'a, R> Response<'a, R> {
+    /// Send response to request.
     pub fn respond(self, message: R) {
         let _ = self.sender.unbounded_send(Rx(self.id, Some(message)));
         // Suppress calling `drop`.

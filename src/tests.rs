@@ -25,11 +25,7 @@ fn multiple() {
         join!(
             async move {
                 let xs = 0..32;
-                let rs = xs
-                    .clone()
-                    .into_iter()
-                    .map(|i| req.request(i).unwrap())
-                    .collect::<Vec<_>>();
+                let rs = xs.clone().into_iter().map(|i| req.request(i).unwrap());
 
                 assert!(join_all(rs.into_iter().map(|r| r.get_response()))
                     .await
