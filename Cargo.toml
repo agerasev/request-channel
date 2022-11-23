@@ -4,7 +4,14 @@ version = "0.0.2"
 edition = "2021"
 resolver = "2"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "Async MPSC request-reponse channel"
+documentation = "https://docs.rs/request-channel"
+homepage = "https://github.com/agerasev/request-channel"
+repository = "https://github.com/agerasev/request-channel.git"
+readme = "README.md"
+keywords = ["request", "response", "channel", "mpsc", "async"]
+categories = ["asynchronous", "concurrency", "data-structures"]
+license = "MIT/Apache-2.0"
 
 [dependencies]
 futures = { version = "0.3.25", default-features = false, features = ["std"] }
