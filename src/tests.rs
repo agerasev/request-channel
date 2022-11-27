@@ -73,3 +73,22 @@ fn request_and_drop() {
         );
     });
 }
+
+#[test]
+fn try_next() {
+    let (req, mut res) = channel::<i32, i32>();
+    block_on(async move {
+        let t = req.request(1).unwrap();
+
+        let (x, r) = res.try_next().unwrap().unwrap();
+        r.respond(x * 2);
+
+        assert!(res.try_next().is_none());
+
+        assert_eq!(t.get_response().await.unwrap(), 2);
+
+        drop(req);
+
+        assert!(res.try_next().unwrap().is_none());
+    });
+}

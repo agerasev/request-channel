@@ -192,6 +192,26 @@ impl<T, R> Responder<T, R> {
             },
         ))
     }
+
+    /// Try get next request.
+    ///
+    /// This function returns:
+    /// + `Some(Some(message, response))` - request received.
+    /// + `Some(None)` - channel is closed.
+    /// + `None` - channel is not closed but no request arrived yet.
+    pub fn try_next(&mut self) -> Option<Option<(T, Response<'_, R>)>> {
+        self.receiver.try_next().ok().map(|r| {
+            r.map(|Tx(id, message)| {
+                (
+                    message,
+                    Response {
+                        id,
+                        sender: &mut self.sender,
+                    },
+                )
+            })
+        })
+    }
 }
 
 impl<'a, R> Response<'a, R> {
